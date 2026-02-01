@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -65,7 +66,58 @@ func (f *Formatter) FormatJourney(num int, journey api.Journey) string {
 		sb.WriteString(f.FormatLeg(leg, i == 0, i == len(journey.Legs)-1))
 	}
 
+	// Google Maps link
+	if mapsURL := GenerateJourneyMapsURL(journey); mapsURL != "" {
+		sb.WriteString(fmt.Sprintf("  🗺️  %s\n", mapsURL))
+	}
+
 	return sb.String()
+}
+
+// GenerateJourneyMapsURL creates a Google Maps URL for a transit journey
+func GenerateJourneyMapsURL(journey api.Journey) string {
+	if len(journey.Legs) == 0 {
+		return ""
+	}
+
+	// Get origin from first leg
+	origin := journey.Legs[0].Origin
+	// Get destination from last leg
+	dest := journey.Legs[len(journey.Legs)-1].Destination
+
+	// Build URL with coordinates if available, otherwise use names
+	params := url.Values{}
+	params.Set("api", "1")
+
+	if len(origin.Coord) >= 2 {
+		params.Set("origin", fmt.Sprintf("%f,%f", origin.Coord[1], origin.Coord[0]))
+	} else {
+		params.Set("origin", origin.GetStopName())
+	}
+
+	if len(dest.Coord) >= 2 {
+		params.Set("destination", fmt.Sprintf("%f,%f", dest.Coord[1], dest.Coord[0]))
+	} else {
+		params.Set("destination", dest.GetStopName())
+	}
+
+	params.Set("travelmode", "transit")
+
+	// Add waypoints for intermediate stops (transfers)
+	if len(journey.Legs) > 1 {
+		var waypoints []string
+		for i := 0; i < len(journey.Legs)-1; i++ {
+			transfer := journey.Legs[i].Destination
+			if len(transfer.Coord) >= 2 {
+				waypoints = append(waypoints, fmt.Sprintf("%f,%f", transfer.Coord[1], transfer.Coord[0]))
+			}
+		}
+		if len(waypoints) > 0 {
+			params.Set("waypoints", strings.Join(waypoints, "|"))
+		}
+	}
+
+	return "https://www.google.com/maps/dir/?" + params.Encode()
 }
 
 // FormatLeg formats a single leg of a journey

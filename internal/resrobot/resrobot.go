@@ -420,10 +420,45 @@ func FormatTrips(origin, dest string, trips []ParsedTrip) string {
 				}
 			}
 		}
+
+		// Google Maps link
+		if mapsURL := GenerateTripMapsURL(trip); mapsURL != "" {
+			sb.WriteString(fmt.Sprintf("\n  🗺️  %s\n", mapsURL))
+		}
 	}
 
 	sb.WriteString("\n")
 	sb.WriteString("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
 	return sb.String()
+}
+
+// GenerateTripMapsURL creates a Google Maps URL for a transit trip
+func GenerateTripMapsURL(trip ParsedTrip) string {
+	if len(trip.Legs) == 0 {
+		return ""
+	}
+
+	// Get origin from first leg and destination from last leg
+	origin := trip.Legs[0].Origin
+	dest := trip.Legs[len(trip.Legs)-1].Destination
+
+	params := url.Values{}
+	params.Set("api", "1")
+	params.Set("origin", origin)
+	params.Set("destination", dest)
+	params.Set("travelmode", "transit")
+
+	// Add waypoints for transfers
+	if len(trip.Legs) > 1 {
+		var waypoints []string
+		for i := 0; i < len(trip.Legs)-1; i++ {
+			waypoints = append(waypoints, trip.Legs[i].Destination)
+		}
+		if len(waypoints) > 0 {
+			params.Set("waypoints", strings.Join(waypoints, "|"))
+		}
+	}
+
+	return "https://www.google.com/maps/dir/?" + params.Encode()
 }
