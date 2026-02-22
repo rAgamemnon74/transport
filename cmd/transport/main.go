@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +15,8 @@ import (
 	"transport/internal/car"
 	"transport/internal/display"
 	"transport/internal/flight"
+	"transport/internal/mcp"
+	"transport/internal/output"
 	"transport/internal/resrobot"
 	"transport/internal/taxi"
 )
@@ -23,6 +28,11 @@ var (
 func main() {
 	if len(os.Args) > 1 {
 		cmd := strings.ToLower(os.Args[1])
+
+		if cmd == "--mcp" {
+			runMCP()
+			return
+		}
 
 		if isNextCommand(cmd) {
 			runNextCommand(os.Args[2:])
@@ -140,14 +150,17 @@ func runCarCommand(args []string) {
 	fs := flag.NewFlagSet("car", flag.ExitOnError)
 
 	var (
-		distance  float64
-		startFuel float64
+		distance   float64
+		startFuel  float64
+		jsonOutput bool
 	)
 
 	fs.Float64Var(&distance, "d", 0, "Distance in km")
 	fs.Float64Var(&distance, "distance", 0, "Distance in km")
 	fs.Float64Var(&startFuel, "f", 100, "Starting fuel level in % (default: 100 = full tank)")
 	fs.Float64Var(&startFuel, "fuel", 100, "Starting fuel level in %")
+	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Transport - Car directions / Bil vägbeskrivning\n\n")
@@ -181,8 +194,14 @@ func runCarCommand(args []string) {
 	to := posArgs[1]
 
 	profile := car.DefaultProfile()
-	output := car.FormatCarTrip(from, to, distance, startFuel, profile)
-	fmt.Print(output)
+
+	if jsonOutput {
+		jsonStr := output.FormatCarJSON(from, to, distance, startFuel, profile)
+		fmt.Print(jsonStr)
+	} else {
+		out := car.FormatCarTrip(from, to, distance, startFuel, profile)
+		fmt.Print(out)
+	}
 }
 
 func runFlyCommand(args []string) {
@@ -192,6 +211,7 @@ func runFlyCommand(args []string) {
 		dateFlag    string
 		returnFlag  string
 		showPrivate bool
+		jsonOutput  bool
 	)
 
 	fs.StringVar(&dateFlag, "d", "", "Departure date (YYYY-MM-DD)")
@@ -200,6 +220,8 @@ func runFlyCommand(args []string) {
 	fs.StringVar(&returnFlag, "return", "", "Return date (YYYY-MM-DD)")
 	fs.BoolVar(&showPrivate, "p", false, "Show private jet & helicopter options")
 	fs.BoolVar(&showPrivate, "private", false, "Show private jet & helicopter options")
+	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Transport - Flight search / Sök flygresor\n\n")
@@ -282,13 +304,22 @@ func runFlyCommand(args []string) {
 		search.ReturnDate = parsed
 	}
 
-	// Format and display
-	output := flight.FormatFlightSearch(search)
-	fmt.Print(output)
+	if jsonOutput {
+		jsonStr := output.FormatFlightJSON(search)
+		fmt.Print(jsonStr)
+	} else {
+		out := flight.FormatFlightSearch(search)
+		fmt.Print(out)
+	}
 }
 
 func runTaxiCommand(args []string) {
 	fs := flag.NewFlagSet("taxi", flag.ExitOnError)
+
+	var jsonOutput bool
+
+	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Transport - Taxi fare estimation / Taxipris\n\n")
@@ -320,7 +351,9 @@ func runTaxiCommand(args []string) {
 		to = posArgs[1]
 	}
 
-	fmt.Fprintf(os.Stderr, "Söker rutt från %s till %s...\n", from, to)
+	if !jsonOutput {
+		fmt.Fprintf(os.Stderr, "Söker rutt från %s till %s...\n", from, to)
+	}
 
 	// Geocode locations
 	fromLoc, err := taxi.Geocode(from)
@@ -353,18 +386,27 @@ func runTaxiCommand(args []string) {
 		Estimates: estimates,
 	}
 
-	// Format and display
-	output := taxi.FormatTaxiSearch(search)
-	fmt.Print(output)
+	if jsonOutput {
+		jsonStr := output.FormatTaxiJSON(search)
+		fmt.Print(jsonStr)
+	} else {
+		out := taxi.FormatTaxiSearch(search)
+		fmt.Print(out)
+	}
 }
 
 func runBusCommand(args []string) {
 	fs := flag.NewFlagSet("buss", flag.ExitOnError)
 
-	var dateFlag string
+	var (
+		dateFlag   string
+		jsonOutput bool
+	)
 
 	fs.StringVar(&dateFlag, "d", "", "Departure date (YYYY-MM-DD)")
 	fs.StringVar(&dateFlag, "date", "", "Departure date (YYYY-MM-DD)")
+	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Transport - Long-distance bus / Långfärdsbuss\n\n")
@@ -431,9 +473,13 @@ func runBusCommand(args []string) {
 		IsAirport: fromCity.IsAirport || toCity.IsAirport,
 	}
 
-	// Format and display
-	output := bus.FormatBusSearch(search)
-	fmt.Print(output)
+	if jsonOutput {
+		jsonStr := output.FormatBusJSON(search)
+		fmt.Print(jsonStr)
+	} else {
+		out := bus.FormatBusSearch(search)
+		fmt.Print(out)
+	}
 }
 
 // parseFlightRoute extracts origin and destination from args
@@ -556,20 +602,23 @@ func runFlightCommand(args []string) {
 	nearby := flight.FindNearbyAirports(airports, lat, lon, radius, scheduledOnly)
 
 	// Format and display
-	output := flight.FormatNearbyAirports(location, radius, nearby)
-	fmt.Print(output)
+	out := flight.FormatNearbyAirports(location, radius, nearby)
+	fmt.Print(out)
 }
 
 func runNextCommand(args []string) {
 	fs := flag.NewFlagSet("next", flag.ExitOnError)
 
 	var (
-		count int
-		lang  string
+		count      int
+		lang       string
+		jsonOutput bool
 	)
 
 	fs.IntVar(&count, "n", 3, "Number of departures to show")
 	fs.StringVar(&lang, "l", "sv", "Language (sv/en)")
+	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Transport - Next departures / Nästa avgång\n\n")
@@ -620,10 +669,12 @@ func runNextCommand(args []string) {
 	// Create API client
 	client := api.NewClient()
 
-	if towards != "" {
-		fmt.Fprintf(os.Stderr, "Söker %s från %s mot %s...\n", modeLower, location, towards)
-	} else {
-		fmt.Fprintf(os.Stderr, "Söker %s från %s...\n", modeLower, location)
+	if !jsonOutput {
+		if towards != "" {
+			fmt.Fprintf(os.Stderr, "Söker %s från %s mot %s...\n", modeLower, location, towards)
+		} else {
+			fmt.Fprintf(os.Stderr, "Söker %s från %s...\n", modeLower, location)
+		}
 	}
 
 	departures, site, err := client.GetNextDepartures(location, modeLower, towards, count)
@@ -632,14 +683,20 @@ func runNextCommand(args []string) {
 		os.Exit(1)
 	}
 
-	// Format and display
-	formatter := display.NewFormatter(lang)
-	output := formatter.FormatDepartures(site, modeLower, towards, departures)
-	fmt.Print(output)
+	if jsonOutput {
+		jsonStr := output.FormatDeparturesJSON(site.Name, departures)
+		fmt.Print(jsonStr)
+	} else {
+		// Format and display
+		formatter := display.NewFormatter(lang)
+		out := formatter.FormatDepartures(site, modeLower, towards, departures)
+		fmt.Print(out)
+	}
 }
 
 func runTripCommand() {
-	// Flags
+	fs := flag.NewFlagSet("trip", flag.ExitOnError)
+
 	var (
 		timeFlag    string
 		dateFlag    string
@@ -652,26 +709,26 @@ func runTripCommand() {
 		nationwide  bool
 	)
 
-	flag.StringVar(&timeFlag, "time", "", "Departure time (HH:MM)")
-	flag.StringVar(&timeFlag, "t", "", "Departure time (HH:MM) (shorthand)")
-	flag.StringVar(&dateFlag, "date", "", "Departure date (YYYY-MM-DD)")
-	flag.StringVar(&dateFlag, "d", "", "Departure date (YYYY-MM-DD) (shorthand)")
-	flag.BoolVar(&arriveBy, "arrive", false, "Search by arrival time instead of departure")
-	flag.BoolVar(&arriveBy, "a", false, "Search by arrival time (shorthand)")
-	flag.IntVar(&maxChanges, "changes", -1, "Maximum number of changes (0-9, -1 for unlimited)")
-	flag.IntVar(&maxChanges, "c", -1, "Maximum changes (shorthand)")
-	flag.IntVar(&numResults, "results", 3, "Number of results (1-6)")
-	flag.IntVar(&numResults, "n", 3, "Number of results (shorthand)")
-	flag.StringVar(&lang, "lang", "sv", "Language (sv/en)")
-	flag.StringVar(&lang, "l", "sv", "Language (shorthand)")
-	flag.BoolVar(&showVersion, "version", false, "Show version")
-	flag.BoolVar(&showVersion, "v", false, "Show version (shorthand)")
-	flag.BoolVar(&jsonOutput, "json", false, "Output raw JSON")
-	flag.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
-	flag.BoolVar(&nationwide, "se", false, "Search all of Sweden (ResRobot)")
-	flag.BoolVar(&nationwide, "sweden", false, "Search all of Sweden (ResRobot)")
+	fs.StringVar(&timeFlag, "time", "", "Departure time (HH:MM)")
+	fs.StringVar(&timeFlag, "t", "", "Departure time (HH:MM) (shorthand)")
+	fs.StringVar(&dateFlag, "date", "", "Departure date (YYYY-MM-DD)")
+	fs.StringVar(&dateFlag, "d", "", "Departure date (YYYY-MM-DD) (shorthand)")
+	fs.BoolVar(&arriveBy, "arrive", false, "Search by arrival time instead of departure")
+	fs.BoolVar(&arriveBy, "a", false, "Search by arrival time (shorthand)")
+	fs.IntVar(&maxChanges, "changes", -1, "Maximum number of changes (0-9, -1 for unlimited)")
+	fs.IntVar(&maxChanges, "c", -1, "Maximum changes (shorthand)")
+	fs.IntVar(&numResults, "results", 3, "Number of results (1-6)")
+	fs.IntVar(&numResults, "n", 3, "Number of results (shorthand)")
+	fs.StringVar(&lang, "lang", "sv", "Language (sv/en)")
+	fs.StringVar(&lang, "l", "sv", "Language (shorthand)")
+	fs.BoolVar(&showVersion, "version", false, "Show version")
+	fs.BoolVar(&showVersion, "v", false, "Show version (shorthand)")
+	fs.BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	fs.BoolVar(&jsonOutput, "j", false, "Output JSON (shorthand)")
+	fs.BoolVar(&nationwide, "se", false, "Search all of Sweden (ResRobot)")
+	fs.BoolVar(&nationwide, "sweden", false, "Search all of Sweden (ResRobot)")
 
-	flag.Usage = func() {
+	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Transport - Sweden public transport planner\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  transport [options] <destination>\n")
@@ -681,7 +738,8 @@ func runTripCommand() {
 		fmt.Fprintf(os.Stderr, "  transport fly|flyga from <origin> to <destination>\n")
 		fmt.Fprintf(os.Stderr, "  transport flight|flyg [location]\n")
 		fmt.Fprintf(os.Stderr, "  transport taxi <from> <to>\n")
-		fmt.Fprintf(os.Stderr, "  transport buss <from> <to>\n\n")
+		fmt.Fprintf(os.Stderr, "  transport buss <from> <to>\n")
+		fmt.Fprintf(os.Stderr, "  transport --mcp                              # MCP server mode\n\n")
 		fmt.Fprintf(os.Stderr, "Commands:\n")
 		fmt.Fprintf(os.Stderr, "  (default)    Plan a trip between two locations (public transport)\n")
 		fmt.Fprintf(os.Stderr, "  next, nästa  Show next departures (see: transport next --help)\n")
@@ -689,10 +747,12 @@ func runTripCommand() {
 		fmt.Fprintf(os.Stderr, "  fly, flyga   Search for flights (booking links)\n")
 		fmt.Fprintf(os.Stderr, "  flight, flyg Find nearby airports\n")
 		fmt.Fprintf(os.Stderr, "  taxi         Taxi fare estimation & booking\n")
-		fmt.Fprintf(os.Stderr, "  buss         Long-distance buses (FlixBus, Vy, Flygbussarna)\n\n")
+		fmt.Fprintf(os.Stderr, "  buss         Long-distance buses (FlixBus, Vy, Flygbussarna)\n")
+		fmt.Fprintf(os.Stderr, "  --mcp        Run as MCP server (stdio JSON-RPC)\n\n")
 		fmt.Fprintf(os.Stderr, "Examples:\n")
 		fmt.Fprintf(os.Stderr, "  transport Odenplan                           # Stockholm (SL)\n")
 		fmt.Fprintf(os.Stderr, "  transport Slussen Odenplan                   # Stockholm (SL)\n")
+		fmt.Fprintf(os.Stderr, "  transport -j Slussen Odenplan                # JSON output\n")
 		fmt.Fprintf(os.Stderr, "  transport -se Sundsvall Ånge                 # Nationwide (ResRobot)\n")
 		fmt.Fprintf(os.Stderr, "  transport -se Göteborg \"Stockholm Central\"   # Nationwide (ResRobot)\n")
 		fmt.Fprintf(os.Stderr, "  transport -t 08:30 Slussen T-Centralen\n")
@@ -703,21 +763,21 @@ func runTripCommand() {
 		fmt.Fprintf(os.Stderr, "  transport taxi Slussen Arlanda\n")
 		fmt.Fprintf(os.Stderr, "  transport buss Stockholm Göteborg\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
-		flag.PrintDefaults()
+		fs.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nNationwide search (-se) requires RESROBOT_API_KEY.\n")
 		fmt.Fprintf(os.Stderr, "Get a free key at: https://www.trafiklab.se/api/trafiklab-apis/resrobot-v21/\n")
 	}
 
-	flag.Parse()
+	fs.Parse(os.Args[1:])
 
 	if showVersion {
 		fmt.Printf("transport version %s\n", version)
 		os.Exit(0)
 	}
 
-	args := flag.Args()
+	args := fs.Args()
 	if len(args) < 1 {
-		flag.Usage()
+		fs.Usage()
 		os.Exit(1)
 	}
 
@@ -755,7 +815,7 @@ func runTripCommand() {
 
 	// Use ResRobot for nationwide search
 	if nationwide {
-		runResRobotSearch(origin, dest, searchTime, arriveBy, numResults)
+		runResRobotSearch(origin, dest, searchTime, arriveBy, numResults, jsonOutput)
 		return
 	}
 
@@ -771,7 +831,9 @@ func runTripCommand() {
 	client := api.NewClient()
 
 	// Search for stops
-	fmt.Fprintf(os.Stderr, "Söker resor från %s till %s...\n", origin, dest)
+	if !jsonOutput {
+		fmt.Fprintf(os.Stderr, "Söker resor från %s till %s...\n", origin, dest)
+	}
 
 	journeys, err := client.PlanTripByName(origin, dest, opts)
 	if err != nil {
@@ -784,14 +846,19 @@ func runTripCommand() {
 		os.Exit(1)
 	}
 
-	// Format and display results
-	formatter := display.NewFormatter(lang)
-	output := formatter.FormatJourneys(origin, dest, journeys)
-	fmt.Print(output)
+	if jsonOutput {
+		jsonStr := output.FormatJourneysJSON(origin, dest, journeys, display.GenerateJourneyMapsURL)
+		fmt.Print(jsonStr)
+	} else {
+		// Format and display results
+		formatter := display.NewFormatter(lang)
+		out := formatter.FormatJourneys(origin, dest, journeys)
+		fmt.Print(out)
+	}
 }
 
 // runResRobotSearch performs a nationwide search using ResRobot
-func runResRobotSearch(origin, dest string, searchTime time.Time, arriveBy bool, numResults int) {
+func runResRobotSearch(origin, dest string, searchTime time.Time, arriveBy bool, numResults int, jsonOutput bool) {
 	client := resrobot.NewClient()
 
 	if !client.HasAPIKey() {
@@ -811,7 +878,9 @@ func runResRobotSearch(origin, dest string, searchTime time.Time, arriveBy bool,
 		NumResults: numResults,
 	}
 
-	fmt.Fprintf(os.Stderr, "Söker resor från %s till %s (hela Sverige)...\n", origin, dest)
+	if !jsonOutput {
+		fmt.Fprintf(os.Stderr, "Söker resor från %s till %s (hela Sverige)...\n", origin, dest)
+	}
 
 	trips, err := client.PlanTripByName(origin, dest, opts)
 	if err != nil {
@@ -824,8 +893,13 @@ func runResRobotSearch(origin, dest string, searchTime time.Time, arriveBy bool,
 		os.Exit(1)
 	}
 
-	output := resrobot.FormatTrips(origin, dest, trips)
-	fmt.Print(output)
+	if jsonOutput {
+		jsonStr := output.FormatResRobotJSON(origin, dest, trips)
+		fmt.Print(jsonStr)
+	} else {
+		out := resrobot.FormatTrips(origin, dest, trips)
+		fmt.Print(out)
+	}
 }
 
 // getDefaultLocation returns the default origin location
@@ -874,4 +948,288 @@ func handleError(err error, origin, dest string, client *api.Client) {
 	}
 
 	fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+}
+
+// runMCP starts the transport MCP server on stdio.
+func runMCP() {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	registry := mcp.NewToolRegistry()
+	registerTools(registry)
+	server := mcp.NewServer("transport", version, registry, logger)
+	logger.Info("transport MCP server starting")
+	if err := server.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
+		logger.Error("MCP server error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func registerTools(registry *mcp.ToolRegistry) {
+	// transport/plan-trip
+	registry.Register(mcp.Tool{
+		Name:        "transport/plan-trip",
+		Description: "Plan a public transport trip in Sweden. Uses SL for Stockholm region, ResRobot for nationwide. Returns trips with departure/arrival times, lines, platforms, and changes.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"origin":     {"type": "string", "description": "Origin stop or address"},
+				"destination":{"type": "string", "description": "Destination stop or address"},
+				"time":       {"type": "string", "description": "Departure/arrival time HH:MM (default: now)"},
+				"date":       {"type": "string", "description": "Date YYYY-MM-DD (default: today)"},
+				"arriveBy":   {"type": "boolean", "description": "If true, time is arrival time"},
+				"nationwide": {"type": "boolean", "description": "Search all of Sweden via ResRobot (default: Stockholm/SL)"}
+			},
+			"required": ["origin", "destination"]
+		}`),
+	}, handlePlanTrip)
+
+	// transport/next-departures
+	registry.Register(mcp.Tool{
+		Name:        "transport/next-departures",
+		Description: "Get real-time next departures from a stop in Stockholm (SL). Returns line, destination, scheduled/expected times, delay status.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"location": {"type": "string", "description": "Stop or station name"},
+				"mode":     {"type": "string", "description": "Transport mode: bus, metro, train, tram, ship"},
+				"towards":  {"type": "string", "description": "Filter by destination direction"},
+				"count":    {"type": "integer", "description": "Number of departures (default: 3)"}
+			},
+			"required": ["location"]
+		}`),
+	}, handleNextDepartures)
+
+	// transport/taxi-estimate
+	registry.Register(mcp.Tool{
+		Name:        "transport/taxi-estimate",
+		Description: "Estimate taxi fares between two locations in Sweden. Returns distance, duration, and fare estimates from multiple taxi companies with booking links.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"from": {"type": "string", "description": "Pickup address or place name"},
+				"to":   {"type": "string", "description": "Dropoff address or place name"}
+			},
+			"required": ["from", "to"]
+		}`),
+	}, handleTaxiEstimate)
+
+	// transport/car-directions
+	registry.Register(mcp.Tool{
+		Name:        "transport/car-directions",
+		Description: "Get driving directions with fuel consumption and cost calculation for a VW Tiguan Allspace 2018 Diesel. Returns distance, duration, fuel needed, cost, and fuel stop recommendations.",
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"from":        {"type": "string", "description": "Starting address or place name"},
+				"to":          {"type": "string", "description": "Destination address or place name"},
+				"distanceKm":  {"type": "number", "description": "Known distance in km (if omitted, estimated from addresses)"},
+				"fuelPercent": {"type": "number", "description": "Starting fuel level percentage (default: 100)"}
+			},
+			"required": ["from", "to"]
+		}`),
+	}, handleCarDirections)
+}
+
+func handlePlanTrip(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult, error) {
+	var args struct {
+		Origin      string `json:"origin"`
+		Destination string `json:"destination"`
+		Time        string `json:"time"`
+		Date        string `json:"date"`
+		ArriveBy    bool   `json:"arriveBy"`
+		Nationwide  bool   `json:"nationwide"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("invalid arguments: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	searchTime := time.Now()
+	if args.Date != "" {
+		parsed, err := time.Parse("2006-01-02", args.Date)
+		if err != nil {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent("invalid date format: " + args.Date + " (use YYYY-MM-DD)")},
+				IsError: true,
+			}, nil
+		}
+		searchTime = time.Date(parsed.Year(), parsed.Month(), parsed.Day(),
+			searchTime.Hour(), searchTime.Minute(), 0, 0, searchTime.Location())
+	}
+	if args.Time != "" {
+		parsed, err := time.Parse("15:04", args.Time)
+		if err != nil {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent("invalid time format: " + args.Time + " (use HH:MM)")},
+				IsError: true,
+			}, nil
+		}
+		searchTime = time.Date(searchTime.Year(), searchTime.Month(), searchTime.Day(),
+			parsed.Hour(), parsed.Minute(), 0, 0, searchTime.Location())
+	}
+
+	if args.Nationwide {
+		client := resrobot.NewClient()
+		if !client.HasAPIKey() {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent("RESROBOT_API_KEY not set — nationwide search unavailable")},
+				IsError: true,
+			}, nil
+		}
+		opts := resrobot.TripOptions{
+			Time:       searchTime,
+			ArriveBy:   args.ArriveBy,
+			NumResults: 3,
+		}
+		trips, err := client.PlanTripByName(args.Origin, args.Destination, opts)
+		if err != nil {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent("trip planning failed: " + err.Error())},
+				IsError: true,
+			}, nil
+		}
+		result := output.FormatResRobotJSON(args.Origin, args.Destination, trips)
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent(result)},
+		}, nil
+	}
+
+	// SL (Stockholm region)
+	opts := api.DefaultTripOptions()
+	opts.NumResults = 3
+	opts.ArriveBy = args.ArriveBy
+	opts.Time = searchTime
+
+	client := api.NewClient()
+	journeys, err := client.PlanTripByName(args.Origin, args.Destination, opts)
+	if err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("trip planning failed: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+	result := output.FormatJourneysJSON(args.Origin, args.Destination, journeys, display.GenerateJourneyMapsURL)
+	return mcp.ToolCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(result)},
+	}, nil
+}
+
+func handleNextDepartures(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult, error) {
+	var args struct {
+		Location string `json:"location"`
+		Mode     string `json:"mode"`
+		Towards  string `json:"towards"`
+		Count    int    `json:"count"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("invalid arguments: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	if args.Count <= 0 {
+		args.Count = 3
+	}
+
+	mode := ""
+	if args.Mode != "" {
+		mode = normalizeMode(strings.ToLower(args.Mode))
+		if mode == "" {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent("invalid mode: " + args.Mode + " (use bus, metro, train, tram, ship)")},
+				IsError: true,
+			}, nil
+		}
+	}
+
+	client := api.NewClient()
+	departures, site, err := client.GetNextDepartures(args.Location, mode, args.Towards, args.Count)
+	if err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("departures lookup failed: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	result := output.FormatDeparturesJSON(site.Name, departures)
+	return mcp.ToolCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(result)},
+	}, nil
+}
+
+func handleTaxiEstimate(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult, error) {
+	var args struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("invalid arguments: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	fromLoc, err := taxi.Geocode(args.From)
+	if err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("could not find location: " + args.From + " — " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	toLoc, err := taxi.Geocode(args.To)
+	if err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("could not find location: " + args.To + " — " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	route, err := taxi.CalculateRoute(fromLoc, toLoc)
+	if err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("route calculation failed: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	estimates := taxi.GetFareEstimates(route)
+	search := taxi.TaxiSearch{
+		From:      args.From,
+		To:        args.To,
+		Route:     route,
+		Estimates: estimates,
+	}
+
+	result := output.FormatTaxiJSON(search)
+	return mcp.ToolCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(result)},
+	}, nil
+}
+
+func handleCarDirections(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult, error) {
+	var args struct {
+		From        string  `json:"from"`
+		To          string  `json:"to"`
+		DistanceKm  float64 `json:"distanceKm"`
+		FuelPercent float64 `json:"fuelPercent"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("invalid arguments: " + err.Error())},
+			IsError: true,
+		}, nil
+	}
+
+	if args.FuelPercent <= 0 {
+		args.FuelPercent = 100
+	}
+
+	profile := car.DefaultProfile()
+	result := output.FormatCarJSON(args.From, args.To, args.DistanceKm, args.FuelPercent, profile)
+	return mcp.ToolCallResult{
+		Content: []mcp.ContentBlock{mcp.NewTextContent(result)},
+	}, nil
 }
