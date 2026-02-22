@@ -3,9 +3,9 @@ package display
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"transport/internal/api"
+	"transport/internal/tz"
 )
 
 // FormatDepartures formats departures for display
@@ -77,21 +77,14 @@ func (f *Formatter) calculateMinutesUntil(timeStr string) int {
 		return 0
 	}
 
-	// Parse the time (format: 2026-01-31T11:09:57)
-	t, err := time.Parse("2006-01-02T15:04:05", timeStr)
+	// API returns Swedish local time without timezone indicator
+	t, err := tz.ParseStockholm("2006-01-02T15:04:05", timeStr)
 	if err != nil {
 		return 0
 	}
 
-	// The API returns local time (Swedish time), not UTC
-	// We need to compare with current local time
-	now := time.Now()
-
-	// Create a time in the same timezone as now
-	localT := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
-
-	diff := localT.Sub(now)
-	minutes := int(diff.Minutes())
+	diff := tz.Now().Sub(t)
+	minutes := -int(diff.Minutes())
 
 	if minutes < 0 {
 		return 0

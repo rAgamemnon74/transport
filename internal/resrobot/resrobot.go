@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"transport/internal/tz"
 )
 
 const (
@@ -96,7 +98,7 @@ type TripOptions struct {
 // DefaultTripOptions returns default options
 func DefaultTripOptions() TripOptions {
 	return TripOptions{
-		Time:       time.Now(),
+		Time:       tz.Now(),
 		ArriveBy:   false,
 		NumResults: 5,
 	}
@@ -302,12 +304,12 @@ func parseDateTime(date, timeStr string) time.Time {
 	combined := date + " " + timeStr
 
 	// Try "2006-01-02 15:04:05"
-	if t, err := time.ParseInLocation("2006-01-02 15:04:05", combined, time.Local); err == nil {
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", combined, tz.Stockholm); err == nil {
 		return t
 	}
 
 	// Try "2006-01-02 15:04"
-	if t, err := time.ParseInLocation("2006-01-02 15:04", combined, time.Local); err == nil {
+	if t, err := time.ParseInLocation("2006-01-02 15:04", combined, tz.Stockholm); err == nil {
 		return t
 	}
 

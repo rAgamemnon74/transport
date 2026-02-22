@@ -19,6 +19,7 @@ import (
 	"transport/internal/output"
 	"transport/internal/resrobot"
 	"transport/internal/taxi"
+	"transport/internal/tz"
 )
 
 var (
@@ -287,7 +288,7 @@ func runFlyCommand(args []string) {
 
 	// Parse dates
 	if dateFlag != "" {
-		parsed, err := time.Parse("2006-01-02", dateFlag)
+		parsed, err := tz.ParseStockholm("2006-01-02", dateFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: Invalid date format '%s' (use YYYY-MM-DD)\n", dateFlag)
 			os.Exit(1)
@@ -792,9 +793,9 @@ func runTripCommand() {
 	}
 
 	// Parse time
-	searchTime := time.Now()
+	searchTime := tz.Now()
 	if dateFlag != "" {
-		parsed, err := time.Parse("2006-01-02", dateFlag)
+		parsed, err := tz.ParseStockholm("2006-01-02", dateFlag)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: invalid date format '%s' (use YYYY-MM-DD)\n", dateFlag)
 			os.Exit(1)
@@ -1045,9 +1046,9 @@ func handlePlanTrip(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult,
 		}, nil
 	}
 
-	searchTime := time.Now()
+	searchTime := tz.Now()
 	if args.Date != "" {
-		parsed, err := time.Parse("2006-01-02", args.Date)
+		parsed, err := tz.ParseStockholm("2006-01-02", args.Date)
 		if err != nil {
 			return mcp.ToolCallResult{
 				Content: []mcp.ContentBlock{mcp.NewTextContent("invalid date format: " + args.Date + " (use YYYY-MM-DD)")},

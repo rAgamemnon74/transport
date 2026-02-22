@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"transport/internal/api"
+	"transport/internal/tz"
 )
 
 const (
@@ -33,8 +34,8 @@ func (f *Formatter) FormatJourneys(origin, dest string, journeys []api.Journey) 
 	// Header
 	sb.WriteString(strings.Repeat("━", lineWidth) + "\n")
 	sb.WriteString(fmt.Sprintf(" %s → %s", origin, dest))
-	sb.WriteString(strings.Repeat(" ", max(0, lineWidth-len(origin)-len(dest)-6-len(time.Now().Format("Mon 2 Jan")))))
-	sb.WriteString(time.Now().Format("Mon 2 Jan") + "\n")
+	sb.WriteString(strings.Repeat(" ", max(0, lineWidth-len(origin)-len(dest)-6-len(tz.Now().Format("Mon 2 Jan")))))
+	sb.WriteString(tz.Now().Format("Mon 2 Jan") + "\n")
 	sb.WriteString(strings.Repeat("━", lineWidth) + "\n\n")
 
 	// Each journey
@@ -202,32 +203,32 @@ func (f *Formatter) formatChanges(n int) string {
 	return fmt.Sprintf("%d byten", n)
 }
 
-// parseTime parses API time format and returns HH:MM in local time
+// parseTime parses API time format and returns HH:MM in Stockholm time
 func parseTime(timeStr string) string {
 	if timeStr == "" {
 		return "     "
 	}
 
-	// Try parsing ISO format with Z (UTC): 2025-01-31T08:15:00Z
-	t, err := time.Parse("2006-01-02T15:04:05Z", timeStr)
-	if err != nil {
-		// Try without Z
-		t, err = time.Parse("2006-01-02T15:04:05", timeStr)
-		if err != nil {
-			// Try RFC3339
-			t, err = time.Parse(time.RFC3339, timeStr)
-			if err != nil {
-				// Return as-is if parsing fails
-				if len(timeStr) >= 16 {
-					return timeStr[11:16] // Extract HH:MM from ISO string
-				}
-				return timeStr
-			}
-		}
+	// Try RFC3339 first (has explicit timezone info)
+	if t, err := time.Parse(time.RFC3339, timeStr); err == nil {
+		return t.In(tz.Stockholm).Format("15:04")
 	}
 
-	// Convert to local time
-	return t.Local().Format("15:04")
+	// Try ISO with Z suffix (UTC)
+	if t, err := time.Parse("2006-01-02T15:04:05Z", timeStr); err == nil {
+		return t.In(tz.Stockholm).Format("15:04")
+	}
+
+	// Without timezone — Swedish APIs return local Swedish time
+	if t, err := time.ParseInLocation("2006-01-02T15:04:05", timeStr, tz.Stockholm); err == nil {
+		return t.Format("15:04")
+	}
+
+	// Fallback: extract HH:MM from ISO string
+	if len(timeStr) >= 16 {
+		return timeStr[11:16]
+	}
+	return timeStr
 }
 
 // shortName returns the disassembled name if available, otherwise the full name

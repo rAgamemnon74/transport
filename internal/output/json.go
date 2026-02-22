@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"transport/internal/api"
+	"transport/internal/tz"
 )
 
 // JSONOutput represents the standardized JSON output format
@@ -143,7 +144,7 @@ type BusRoute struct {
 func NewOutput(outputType, origin, dest string) *JSONOutput {
 	return &JSONOutput{
 		Type:      outputType,
-		Timestamp: time.Now().Format(time.RFC3339),
+		Timestamp: tz.Now().Format(time.RFC3339),
 		Origin:    origin,
 		Dest:      dest,
 	}
@@ -234,7 +235,7 @@ func FormatDeparturesJSON(siteName string, departures []api.Departure) string {
 	output := NewOutput("departures", siteName, "")
 
 	deps := make([]Departure, 0, len(departures))
-	now := time.Now()
+	now := tz.Now()
 
 	for _, d := range departures {
 		dep := Departure{
@@ -247,9 +248,9 @@ func FormatDeparturesJSON(siteName string, departures []api.Departure) string {
 		}
 
 		// Calculate minutes away
-		if expectedTime, err := time.Parse("15:04:05", d.Expected); err == nil {
+		if expectedTime, err := tz.ParseStockholm("15:04:05", d.Expected); err == nil {
 			expectedToday := time.Date(now.Year(), now.Month(), now.Day(),
-				expectedTime.Hour(), expectedTime.Minute(), expectedTime.Second(), 0, now.Location())
+				expectedTime.Hour(), expectedTime.Minute(), expectedTime.Second(), 0, tz.Stockholm)
 			dep.MinutesAway = int(expectedToday.Sub(now).Minutes())
 			if dep.MinutesAway < 0 {
 				dep.MinutesAway = 0

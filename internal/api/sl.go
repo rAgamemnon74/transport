@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"transport/internal/tz"
 )
 
 const (
@@ -80,7 +82,7 @@ type TripOptions struct {
 // DefaultTripOptions returns default options for trip planning
 func DefaultTripOptions() TripOptions {
 	return TripOptions{
-		Time:       time.Now(),
+		Time:       tz.Now(),
 		ArriveBy:   false,
 		MaxChanges: -1,
 		NumResults: 3,
