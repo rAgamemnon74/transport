@@ -125,10 +125,12 @@ func (v VehicleProfile) CalculateFuelStops(totalDistanceKm float64, startingFuel
 
 // GenerateGoogleMapsURL creates a Google Maps directions URL
 func GenerateGoogleMapsURL(from, to string) string {
-	baseURL := "https://www.google.com/maps/dir/"
-	fromEncoded := url.PathEscape(from)
-	toEncoded := url.PathEscape(to)
-	return baseURL + fromEncoded + "/" + toEncoded
+	params := url.Values{}
+	params.Set("api", "1")
+	params.Set("origin", from)
+	params.Set("destination", to)
+	params.Set("travelmode", "driving")
+	return "https://www.google.com/maps/dir/?" + params.Encode()
 }
 
 // GenerateGoogleMapsURLWithParams creates a Google Maps URL with driving mode
