@@ -953,7 +953,7 @@ func handleError(err error, origin, dest string, client *api.Client) {
 
 // runMCP starts the transport MCP server on stdio.
 func runMCP() {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	registry := mcp.NewToolRegistry()
 	registerTools(registry)
 	server := mcp.NewServer("transport", version, registry, logger)
