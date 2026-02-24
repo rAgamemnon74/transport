@@ -986,16 +986,17 @@ func registerTools(registry *mcp.ToolRegistry) {
 	// transport/next-departures
 	registry.Register(mcp.Tool{
 		Name:        "transport/next-departures",
-		Description: "Get real-time next departures from a stop in Stockholm (SL). Returns line, destination, scheduled/expected times, delay status.",
+		Description: "Get real-time next departures from a stop in Stockholm (SL). Returns line, destination, scheduled/expected times, delay status. Provide either location (stop name) or latitude+longitude (finds nearest stop).",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"location": {"type": "string", "description": "Stop or station name"},
-				"mode":     {"type": "string", "description": "Transport mode: bus, metro, train, tram, ship"},
-				"towards":  {"type": "string", "description": "Filter by destination direction"},
-				"count":    {"type": "integer", "description": "Number of departures (default: 3)"}
-			},
-			"required": ["location"]
+				"location":  {"type": "string", "description": "Stop or station name"},
+				"latitude":  {"type": "number", "description": "Latitude (WGS84) — used to find nearest stop if location is not provided"},
+				"longitude": {"type": "number", "description": "Longitude (WGS84) — used to find nearest stop if location is not provided"},
+				"mode":      {"type": "string", "description": "Transport mode: bus, metro, train, tram, ship"},
+				"towards":   {"type": "string", "description": "Filter by destination direction"},
+				"count":     {"type": "integer", "description": "Number of departures (default: 3)"}
+			}
 		}`),
 	}, handleNextDepartures)
 
@@ -1118,10 +1119,12 @@ func handlePlanTrip(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult,
 
 func handleNextDepartures(_ context.Context, raw json.RawMessage) (mcp.ToolCallResult, error) {
 	var args struct {
-		Location string `json:"location"`
-		Mode     string `json:"mode"`
-		Towards  string `json:"towards"`
-		Count    int    `json:"count"`
+		Location  string   `json:"location"`
+		Latitude  *float64 `json:"latitude"`
+		Longitude *float64 `json:"longitude"`
+		Mode      string   `json:"mode"`
+		Towards   string   `json:"towards"`
+		Count     int      `json:"count"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return mcp.ToolCallResult{
@@ -1146,7 +1149,34 @@ func handleNextDepartures(_ context.Context, raw json.RawMessage) (mcp.ToolCallR
 	}
 
 	client := api.NewClient()
-	departures, site, err := client.GetNextDepartures(args.Location, mode, args.Towards, args.Count)
+
+	// Resolve location: use stop name if provided, otherwise find nearest stop by coordinates.
+	location := args.Location
+	if location == "" && args.Latitude != nil && args.Longitude != nil {
+		site, distMeters, err := client.NearestSite(*args.Latitude, *args.Longitude)
+		if err != nil {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent("couldn't find a nearby stop: " + err.Error())},
+				IsError: true,
+			}, nil
+		}
+		if distMeters > 5000 {
+			return mcp.ToolCallResult{
+				Content: []mcp.ContentBlock{mcp.NewTextContent(fmt.Sprintf("nearest stop is %s (%.0f m away) — too far for useful departures", site.Name, distMeters))},
+				IsError: true,
+			}, nil
+		}
+		location = site.Name
+	}
+
+	if location == "" {
+		return mcp.ToolCallResult{
+			Content: []mcp.ContentBlock{mcp.NewTextContent("either location or latitude+longitude is required")},
+			IsError: true,
+		}, nil
+	}
+
+	departures, site, err := client.GetNextDepartures(location, mode, args.Towards, args.Count)
 	if err != nil {
 		return mcp.ToolCallResult{
 			Content: []mcp.ContentBlock{mcp.NewTextContent("departures lookup failed: " + err.Error())},

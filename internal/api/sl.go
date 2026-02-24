@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"time"
@@ -233,6 +234,64 @@ func sortSiteMatches(sites []Site, query string) {
 			}
 		}
 	}
+}
+
+// NearestSite finds the closest site to the given coordinates.
+// Uses the Haversine formula for distance calculation.
+func (c *Client) NearestSite(lat, lon float64) (*Site, float64, error) {
+	reqURL := fmt.Sprintf("%s/sites", transportBaseURL)
+
+	resp, err := c.httpClient.Get(reqURL)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to fetch sites: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	var allSites []Site
+	if err := json.NewDecoder(resp.Body).Decode(&allSites); err != nil {
+		return nil, 0, fmt.Errorf("failed to decode sites: %w", err)
+	}
+
+	if len(allSites) == 0 {
+		return nil, 0, fmt.Errorf("no sites available")
+	}
+
+	var nearest *Site
+	minDist := math.MaxFloat64
+	for i := range allSites {
+		s := &allSites[i]
+		if s.Lat == 0 && s.Lon == 0 {
+			continue
+		}
+		d := haversineMeters(lat, lon, s.Lat, s.Lon)
+		if d < minDist {
+			minDist = d
+			nearest = s
+		}
+	}
+
+	if nearest == nil {
+		return nil, 0, fmt.Errorf("no sites with coordinates found")
+	}
+
+	return nearest, minDist, nil
+}
+
+// haversineMeters returns the distance in meters between two WGS84 points.
+func haversineMeters(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadius = 6371000 // meters
+	dLat := (lat2 - lat1) * math.Pi / 180
+	dLon := (lon2 - lon1) * math.Pi / 180
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*math.Pi/180)*math.Cos(lat2*math.Pi/180)*
+			math.Sin(dLon/2)*math.Sin(dLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earthRadius * c
 }
 
 // GetDepartures fetches departures from a site
